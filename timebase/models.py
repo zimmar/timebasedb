@@ -1,12 +1,13 @@
-from django.db import models, connection
+from django.db import models
 from django.utils import timezone
 
-class tbdb(models.Model):
-    # Define your model fields here
+
+class BaseTimeSeriesModel(models.Model):
+    """Base class for time series data with common functionality"""
+    
     timestamp = models.DateTimeField(default=timezone.now)
     measurement_name = models.CharField(max_length=100)
-    measurement_type = models.CharField(max_length=20, 
-    choices=[
+    measurement_type = models.CharField(max_length=20, choices=[
         ('integer', 'Integer'),
         ('float', 'Float'),
         ('string', 'String'),
@@ -16,13 +17,13 @@ class tbdb(models.Model):
     value = models.TextField(null=True, blank=True)
 
     class Meta:
-        verbose_name = "Timebase Database"
-        verbose_name_plural = "Timebase Databases"
+        abstract = True
         ordering = ['-timestamp']
 
     def __str__(self):
-        return f"tbdb(name='{self.measurement_name}', type={self.measurement_type}, data={self.data}, time={self.timestamp})"
- 
+        return f"{self.__class__.__name__}(name='{self.measurement_name}', type={self.measurement_type}, data={self.data}, time={self.timestamp})"
+        # return self.measurement_name
+    
     def __init__(self, measurement_type=None, measurement_name=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         if measurement_type and measurement_name and not self.pk:
@@ -73,128 +74,308 @@ class tbdb(models.Model):
             return self.value.lower() in ('true', '1', 'yes', 'on')
         elif self.measurement_type == 'string':
             return self.value
-
+        elif self.measurement_type == 'decimal':
+            from decimal import Decimal
+            return Decimal(self.value)
         return self.value
 
     @classmethod
     def get_measurements(cls, name=None, measurement_type=None):
-        """Get measurements using raw SQL to avoid field mapping issues"""
-        cursor = connection.cursor()
-        
-        # Get the correct table name from Django's meta
-        table_name = cls._meta.db_table
-        sql = f"SELECT measurement_name, measurement_type, value, timestamp FROM {table_name} WHERE 1=1"
-        params = []
+        """Get measurements using Django ORM"""
+        queryset = cls.objects.all()
         
         if name:
-            sql += " AND measurement_name = %s"
-            params.append(name)
+            queryset = queryset.filter(measurement_name=name)
         if measurement_type:
-            sql += " AND measurement_type = %s"
-            params.append(measurement_type)
+            queryset = queryset.filter(measurement_type=measurement_type)
             
-        sql += " ORDER BY timestamp DESC"
-        
-        cursor.execute(sql, params)
-        results = []
-        for row in cursor.fetchall():
-            # Create a temporary object with correct values
-            obj = cls()
-            obj.measurement_name = row[0]
-            obj.measurement_type = row[1]
-            obj.value = row[2]
-            obj.timestamp = row[3]
-            results.append(obj)
-        return results  
+        return queryset.order_by('-timestamp')
 
     @classmethod
     def avg(cls, name=None):
-        """Calculate average for numeric measurements"""
-        measurements = cls.get_measurements(name=name)
-        numeric_measurements = [m for m in measurements if m.measurement_type in ['integer', 'float', 'decimal']]
-        if not numeric_measurements:
-            return None
+        """Calculate average for numeric measurements using values() query"""
+        queryset = cls.objects.filter(
+            measurement_type__in=['integer', 'float', 'decimal']
+        )
+        if name:
+            queryset = queryset.filter(measurement_name=name)
         
-        total = sum(measurement.data for measurement in numeric_measurements)
-        return total / len(numeric_measurements)
+        values = list(queryset.values_list('value', flat=True))
+        numeric_values = []
+        for value in values:
+            try:
+                numeric_values.append(float(value))
+            except (ValueError, TypeError):
+                continue
+        
+        return sum(numeric_values) / len(numeric_values) if numeric_values else None
 
     @classmethod
     def count(cls, name=None):
         """Count measurements"""
-        return len(cls.get_measurements(name=name))
+        queryset = cls.objects.all()
+        if name:
+            queryset = queryset.filter(measurement_name=name)
+        return queryset.count()
 
     @classmethod
     def sum(cls, name=None):
-        """Sum numeric measurements"""
-        measurements = cls.get_measurements(name=name)
-        numeric_measurements = [m for m in measurements if m.measurement_type in ['integer', 'float', 'decimal']]
-        return sum(measurement.data for measurement in numeric_measurements)
-
+        """Sum numeric measurements using values() query"""
+        queryset = cls.objects.filter(
+            measurement_type__in=['integer', 'float', 'decimal']
+        )
+        if name:
+            queryset = queryset.filter(measurement_name=name)
+        
+        values = list(queryset.values_list('value', flat=True))
+        total = 0
+        for value in values:
+            try:
+                total += float(value)
+            except (ValueError, TypeError):
+                continue
+        return total
+    
     @classmethod
     def min_value(cls, name=None):
-        """Get minimum value for numeric measurements"""
-        measurements = cls.get_measurements(name=name)
-        numeric_measurements = [m for m in measurements if m.measurement_type in ['integer', 'float', 'decimal']]
-        if not numeric_measurements:
-            return None
-        return min(measurement.data for measurement in numeric_measurements)
+        """Get minimum value for numeric measurements using values() query"""
+        queryset = cls.objects.filter(
+            measurement_type__in=['integer', 'float', 'decimal']
+        )
+        if name:
+            queryset = queryset.filter(measurement_name=name)
+        
+        values = list(queryset.values_list('value', flat=True))
+        numeric_values = []
+        for value in values:
+            try:
+                numeric_values.append(float(value))
+            except (ValueError, TypeError):
+                continue
+        return min(numeric_values) if numeric_values else None
 
     @classmethod
     def max_value(cls, name=None):
-        """Get maximum value for numeric measurements"""
-        measurements = cls.get_measurements(name=name)
-        numeric_measurements = [m for m in measurements if m.measurement_type in ['integer', 'float', 'decimal']]
-        if not numeric_measurements:
-            return None
-        return max(measurement.data for measurement in numeric_measurements)
+        """Get maximum value for numeric measurements using values() query"""
+        queryset = cls.objects.filter(
+            measurement_type__in=['integer', 'float', 'decimal']
+        )
+        if name:
+            queryset = queryset.filter(measurement_name=name)
+        
+        values = list(queryset.values_list('value', flat=True))
+        numeric_values = []
+        for value in values:
+            try:
+                numeric_values.append(float(value))
+            except (ValueError, TypeError):
+                continue
+        return max(numeric_values) if numeric_values else None
 
     @classmethod
     def latest(cls, name=None):
         """Get the latest measurement"""
-        measurements = cls.get_measurements(name=name)
-        return measurements[0] if measurements else None
+        queryset = cls.objects.all()
+        if name:
+            queryset = queryset.filter(measurement_name=name)
+        return queryset.order_by('-timestamp').first()
 
     @classmethod
     def all_values(cls, name=None):
-        """Get all data values ordered by timestamp"""
-        return [m.data for m in cls.get_measurements(name=name)]      
+        """Get all data values ordered by timestamp using values() query"""
+        queryset = cls.objects.all()
+        if name:
+            queryset = queryset.filter(measurement_name=name)
+        
+        # Get value and measurement_type for proper conversion
+        records = list(queryset.values('value', 'measurement_type').order_by('-timestamp'))
+        
+        results = []
+        for record in records:
+            try:
+                value = record['value']
+                measurement_type = record['measurement_type']
+                
+                if measurement_type == 'integer':
+                    results.append(int(value))
+                elif measurement_type == 'float':
+                    results.append(float(value))
+                elif measurement_type == 'boolean':
+                    results.append(value.lower() in ('true', '1', 'yes', 'on'))
+                elif measurement_type == 'decimal':
+                    from decimal import Decimal
+                    results.append(Decimal(value))
+                else:
+                    results.append(value)
+            except (ValueError, TypeError):
+                continue
+        
+        return results
 
     @classmethod
     def bulk_delete(cls, names):
         """Delete multiple measurements by name"""
-        cursor = connection.cursor()
-        table_name = cls._meta.db_table
-        sql = f"DELETE FROM {table_name} WHERE 1=1"
-        params = []
-
         if names:
-            sql += " AND measurement_name IN %s"
-            params.append(tuple(names))
-
-        cursor.execute(sql, params)
-        return cursor.rowcount  # Return number of deleted rows
+            return cls.objects.filter(measurement_name__in=names).delete()[0]
+        return 0
 
     @classmethod
     def get_measurements_between_dates(cls, start_date, end_date, name=None):
         """Get measurements between two dates"""
-        cursor = connection.cursor()
-        table_name = cls._meta.db_table
-        sql = f"SELECT measurement_name, measurement_type, value, timestamp FROM {table_name} WHERE 1=1"
-        params = []
-
+        queryset = cls.objects.filter(timestamp__range=[start_date, end_date])
         if name:
-            sql += " AND measurement_name = %s"
-            params.append(name)
-        sql += " AND timestamp BETWEEN %s AND %s"
-        params.extend([start_date, end_date])
+            queryset = queryset.filter(measurement_name=name)
+        return queryset.order_by('-timestamp')
 
-        cursor.execute(sql, params)
-        results = []
-        for row in cursor.fetchall():
-            obj = cls()
-            obj.measurement_name = row[0]
-            obj.measurement_type = row[1]
-            obj.value = row[2]
-            obj.timestamp = row[3]
-            results.append(obj)
-        return results
+
+class tbdb(BaseTimeSeriesModel):
+    """Main timebase database for high-frequency measurements"""
+    
+    class Meta:
+        verbose_name = "Timebase Database"
+        verbose_name_plural = "Timebase Databases"
+        ordering = ['-timestamp']
+        db_table = 'timebase_tbdb'
+
+    @classmethod
+    def compress_to_hourly(cls, start_date=None, end_date=None):
+        """
+        Compress data to hourly averages for numeric measurements.
+        Simplified version using Django ORM and bulk operations.
+        """
+        # Get distinct measurement names and types
+        measurements_info = cls.objects.values('measurement_name', 'measurement_type').distinct()
+        
+        # Filter by date range if provided
+        base_queryset = cls.objects.all()
+        if start_date:
+            base_queryset = base_queryset.filter(timestamp__gte=start_date)
+        if end_date:
+            base_queryset = base_queryset.filter(timestamp__lte=end_date)
+        
+        compression_results = []
+        
+        for info in measurements_info:
+            measurement_name = info['measurement_name']
+            measurement_type = info['measurement_type']
+            
+            # Only compress numeric measurements
+            if measurement_type not in ['integer', 'float', 'decimal']:
+                continue
+                
+            # Get data for this measurement using values() to avoid field mapping issues
+            measurement_records = base_queryset.filter(
+                measurement_name=measurement_name,
+                measurement_type=measurement_type
+            ).values('timestamp', 'value').order_by('timestamp')
+            
+            if not measurement_records:
+                continue
+            
+            # Group by hour and calculate averages
+            hourly_data = {}
+            for record in measurement_records:
+                # Round down to hour
+                hour_timestamp = record['timestamp'].replace(minute=0, second=0, microsecond=0)
+                
+                if hour_timestamp not in hourly_data:
+                    hourly_data[hour_timestamp] = []
+                
+                try:
+                    hourly_data[hour_timestamp].append(float(record['value']))
+                except (ValueError, TypeError):
+                    continue
+            
+            # Create hourly records
+            for hour_timestamp, values in hourly_data.items():
+                if not values:
+                    continue
+                
+                avg_value = sum(values) / len(values)
+                
+                # Check if this hourly record already exists
+                existing = tbdb_hourly.objects.filter(
+                    measurement_name=measurement_name,
+                    timestamp=hour_timestamp
+                ).first()
+                
+                if not existing:
+                    # Create new hourly record with timezone-aware timestamp
+                    if hour_timestamp.tzinfo is None:
+                        hour_timestamp = timezone.make_aware(hour_timestamp)
+                    
+                    tbdb_hourly.objects.create(
+                        measurement_name=measurement_name,
+                        measurement_type=measurement_type,
+                        timestamp=hour_timestamp,
+                        value=str(avg_value)
+                    )
+                    
+                    compression_results.append({
+                        'measurement_name': measurement_name,
+                        'timestamp': hour_timestamp,
+                        'average_value': avg_value
+                    })
+        
+        return compression_results
+
+
+class tbdb_hourly(BaseTimeSeriesModel):
+    """
+    Hourly compressed version of tbdb containing hourly averages.
+    Inherits all functionality from BaseTimeSeriesModel.
+    """
+    
+    class Meta:
+        verbose_name = "Timebase Database (Hourly)"
+        verbose_name_plural = "Timebase Databases (Hourly)"
+        ordering = ['-timestamp']
+        db_table = 'timebase_tbdb_hourly'
+
+    @classmethod
+    def compress_from_main(cls, start_date=None, end_date=None):
+        """
+        Convenience method to compress data from main tbdb table to hourly table.
+        """
+        return tbdb.compress_to_hourly(start_date, end_date)
+
+    @classmethod 
+    def get_hourly_statistics(cls, measurement_name=None, start_date=None, end_date=None):
+        """
+        Get statistics for hourly compressed data using Django ORM.
+        """
+        queryset = cls.objects.filter(
+            measurement_type__in=['integer', 'float', 'decimal']
+        )
+        
+        if measurement_name:
+            queryset = queryset.filter(measurement_name=measurement_name)
+        if start_date:
+            queryset = queryset.filter(timestamp__gte=start_date)
+        if end_date:
+            queryset = queryset.filter(timestamp__lte=end_date)
+        
+        values = list(queryset.values_list('value', flat=True))
+        numeric_values = []
+        for value in values:
+            try:
+                numeric_values.append(float(value))
+            except (ValueError, TypeError):
+                continue
+        
+        if not numeric_values:
+            return {
+                'count': 0,
+                'avg': None,
+                'min': None,
+                'max': None,
+                'sum': None
+            }
+        
+        return {
+            'count': len(numeric_values),
+            'avg': sum(numeric_values) / len(numeric_values),
+            'min': min(numeric_values),
+            'max': max(numeric_values),
+            'sum': sum(numeric_values)
+        }
