@@ -48,3 +48,11 @@ print(f"Average: {tbdb.avg('temperature')}°C")
 print(f"Count: {tbdb.count('temperature')}")
 ```
 
+### 4. Easy installation for testing
+1. Clone repository
+2. Create new environment
+3. Activate environment
+4. Install requirements
+5. Run makemigration
+6. Run migrate
+7. Run generate_temp_data.py.
